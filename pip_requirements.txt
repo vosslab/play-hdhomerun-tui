@@ -1,0 +1,2 @@
+requests  # HTTP client for fetching HDHomeRun discover.json and lineup.json
+textual  # Terminal UI framework for the channel browser TUI
