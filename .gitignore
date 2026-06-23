@@ -1,0 +1,14 @@
+# === UNIVERSAL ===
+.DS_Store
+report_*.txt
+_temp*.?*
+# === LOCAL ===
+# Template-only ignores.
+OTHER_REPOS/
+# === PYTHON ===
+build/
+dist/
+sdist/
+*.egg
+*.egg-info/
+site/

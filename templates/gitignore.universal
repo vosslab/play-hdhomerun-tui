@@ -1,0 +1,11 @@
+# macOS desktop
+.DS_Store
+
+# pytest reports
+report_*.txt
+
+# AI agent temp scripts
+_temp*.?*
+
+# Sibling repos checked out for local cross-repo work
+OTHER_REPOS/
