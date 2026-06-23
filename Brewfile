@@ -1,2 +1,3 @@
 # Homebrew dependencies for this repo. Install with: brew bundle
-# Add packages this repo needs, for example: brew "ffmpeg"
+# Python 3.12 is the pinned interpreter for this repo's tooling.
+brew "python@3.12"
