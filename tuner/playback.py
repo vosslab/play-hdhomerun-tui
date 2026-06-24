@@ -8,6 +8,11 @@ import subprocess
 import tuner.models
 
 #============================================
+# Height thresholds for OTA resolution classes (1080, 720, 480)
+_HEIGHT_1080 = 1000
+_HEIGHT_720 = 700
+_HEIGHT_480 = 400
+
 # mpv flags shared by all profiles (both progressive and interlaced)
 SHARED_FLAGS: list[str] = [
 	'--speed=0.99',
@@ -43,6 +48,140 @@ KNOWN_INTERLACED_GUIDE_NUMBERS: set[str] = {'2.1'}
 
 #============================================
 
+def _height_class(height: int) -> int:
+	"""Map a pixel height to the nearest standard OTA resolution class.
+
+	Args:
+		height: The pixel height from the mediainfo Video track.
+
+	Returns:
+		1080, 720, 480, or 0 when below a recognizable threshold.
+	"""
+	if height >= _HEIGHT_1080:
+		return 1080
+	if height >= _HEIGHT_720:
+		return 720
+	if height >= _HEIGHT_480:
+		return 480
+	# height below 480 is non-standard OTA; return 0 to signal unknown
+	return 0
+
+#============================================
+
+def probe_format(url: str, guide_number: str) -> str:
+	"""Run mediainfo on a stream URL and return a short format label.
+
+	Decision order:
+	  1. Read Video.ScanType ('Interlaced' -> 'i', 'Progressive' -> 'p').
+	  2. Read Video.Height to determine the resolution class (1080, 720, 480).
+	  3. Combine scan suffix and height class into a label like '1080i' or '720p'.
+	  4. Return an empty string on any failure (timeout, missing fields,
+	     unrecognised values) so the display stays blank rather than showing
+	     a guessed or stale label.
+
+	Args:
+		url: Stream URL passed to mediainfo.
+		guide_number: Channel guide number, not used here but included for
+		              symmetry with interlace_for_playback callers.
+
+	Returns:
+		A label such as '1080i', '720p', '1080p', or '480i'; empty string
+		when the probe fails or the fields are absent or unrecognised.
+	"""
+	try:
+		result = subprocess.run(
+			['mediainfo', '--Output=JSON', url],
+			capture_output=True,
+			text=True,
+			timeout=6,
+		)
+	except (FileNotFoundError, subprocess.TimeoutExpired):
+		# mediainfo not installed or stream did not respond in time
+		return ''
+	try:
+		data = json.loads(result.stdout)
+	except json.JSONDecodeError:
+		return ''
+
+	# walk the tracks looking for the Video track
+	tracks = data.get('media', {}).get('track', [])
+	video_track: dict | None = None
+	for track in tracks:
+		if track.get('@type') == 'Video':
+			video_track = track
+			break
+
+	if video_track is None:
+		return ''
+
+	# resolve the scan suffix from ScanType
+	scan_type = video_track.get('ScanType')
+	if scan_type == 'Interlaced':
+		scan_suffix = 'i'
+	elif scan_type == 'Progressive':
+		scan_suffix = 'p'
+	else:
+		# ScanType absent or unrecognised; cannot build a confident label
+		return ''
+
+	# resolve the height class from Height; mediainfo may report it with spaces
+	# (e.g. "1 080"), so strip spaces and accept only plain digits (no try/except)
+	height_str = video_track.get('Height')
+	if height_str is None:
+		return ''
+	height_digits = str(height_str).replace(' ', '')
+	if not height_digits.isdigit():
+		# non-numeric or empty height; cannot build a confident label
+		return ''
+	height = int(height_digits)
+	res_class = _height_class(height)
+	if res_class == 0:
+		# unrecognised resolution; do not guess
+		return ''
+
+	# combine into a label like '1080i' or '720p'
+	label = f'{res_class}{scan_suffix}'
+	return label
+
+#============================================
+
+def interlaced_from_format(label: str) -> bool:
+	"""Return True when a non-empty format label ends in 'i' (interlaced).
+
+	This is a pure helper; it does not run any subprocess or I/O.
+
+	Args:
+		label: A format label such as '1080i', '720p', or '' (empty).
+
+	Returns:
+		True when label is non-empty and ends with 'i', False otherwise.
+	"""
+	return bool(label) and label.endswith('i')
+
+#============================================
+
+def interlace_for_playback(label: str, guide_number: str) -> bool:
+	"""Derive the interlace decision for mpv playback.
+
+	Uses the cached format label when available; falls back to the
+	hard-coded KNOWN_INTERLACED_GUIDE_NUMBERS table when the label is empty
+	(probe failed or channel has never been launched before).
+
+	Args:
+		label: Cached format label ('1080i', '720p', etc.) or '' when absent.
+		guide_number: Channel guide number used for the fallback table lookup.
+
+	Returns:
+		True when the stream should be played with deinterlacing.
+	"""
+	if label:
+		# confident cached label: derive from the scan suffix
+		return interlaced_from_format(label)
+	# no label yet (probe pending or failed): use the known-good table
+	return guide_number in KNOWN_INTERLACED_GUIDE_NUMBERS
+
+#============================================
+
 def build_command(channel: tuner.models.Channel, interlaced: bool) -> list[str]:
 	"""Build the mpv command list for a channel.
 
@@ -60,78 +199,6 @@ def build_command(channel: tuner.models.Channel, interlaced: bool) -> list[str]:
 		profile_flags = PROGRESSIVE_FLAGS
 	cmd = ['mpv', channel.stream_url] + SHARED_FLAGS + profile_flags
 	return cmd
-
-#============================================
-
-def is_interlaced(url: str, guide_number: str) -> bool:
-	"""Determine whether a stream is interlaced.
-
-	Decision order:
-	  1. Run mediainfo on the URL and read Video.ScanType:
-	     'Interlaced' -> True, 'Progressive' -> False.
-	  2. If ScanType absent, use Video.Height:
-	     1080-class -> True (interlaced), 720-class -> False (progressive).
-	  3. If mediainfo times out, fails, or lacks both fields, fall back to
-	     the known-good constant KNOWN_INTERLACED_GUIDE_NUMBERS.
-
-	Args:
-		url: The stream URL to probe with mediainfo.
-		guide_number: The channel guide number, used as the final fallback key.
-
-	Returns:
-		True when the stream is interlaced, False when progressive.
-	"""
-	try:
-		result = subprocess.run(
-			['mediainfo', '--Output=JSON', url],
-			capture_output=True,
-			text=True,
-			timeout=6,
-		)
-	except FileNotFoundError:
-		return guide_number in KNOWN_INTERLACED_GUIDE_NUMBERS
-	except subprocess.TimeoutExpired:
-		return guide_number in KNOWN_INTERLACED_GUIDE_NUMBERS
-	try:
-		data = json.loads(result.stdout)
-	except json.JSONDecodeError:
-		return guide_number in KNOWN_INTERLACED_GUIDE_NUMBERS
-
-	# walk the tracks looking for the Video track
-	tracks = data.get('media', {}).get('track', [])
-	video_track: dict | None = None
-	for track in tracks:
-		if track.get('@type') == 'Video':
-			video_track = track
-			break
-
-	if video_track is None:
-		# no video track found; fall back to the known-good table
-		return guide_number in KNOWN_INTERLACED_GUIDE_NUMBERS
-
-	# primary: ScanType field
-	scan_type = video_track.get('ScanType')
-	if scan_type == 'Interlaced':
-		return True
-	if scan_type == 'Progressive':
-		return False
-
-	# secondary: Height field (1080-class is interlaced OTA, 720-class is progressive)
-	height_str = video_track.get('Height')
-	if height_str is not None:
-		try:
-			height = int(str(height_str).replace(' ', ''))
-		except ValueError:
-			height = 0
-		if height >= 1000:
-			# 1080i class
-			return True
-		if height >= 700:
-			# 720p class
-			return False
-
-	# final fallback: known-good table
-	return guide_number in KNOWN_INTERLACED_GUIDE_NUMBERS
 
 #============================================
 

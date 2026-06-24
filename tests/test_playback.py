@@ -1,8 +1,11 @@
-"""Tests for tuner.playback.build_command profile selection (pure, offline).
+"""Tests for tuner.playback pure helpers and build_command profile selection.
 
-Only the progressive-vs-interlaced flag profile is covered here, since the mpv
-flags matter and are easy to change by accident.  Live behavior -- mediainfo
-probing and the detached mpv launch -- is verified manually, not in pytest.
+Covers:
+  - build_command progressive vs interlaced flag profiles.
+  - interlaced_from_format label mapping (pure, no subprocess).
+  - interlace_for_playback blank-label fallback (pure, no subprocess).
+
+probe_format (runs mediainfo) is not tested here; it is verified by manual E2E.
 """
 
 # local repo modules
@@ -49,3 +52,37 @@ def test_build_command_interlaced_profile() -> None:
 	cmd = tuner.playback.build_command(_make_channel(), interlaced=True)
 	assert "--deinterlace=yes" in cmd
 	assert "--force-seekable=yes" not in cmd
+
+#============================================
+
+def test_interlaced_from_format_1080i_is_true() -> None:
+	"""interlaced_from_format returns True for a label ending in 'i'."""
+	assert tuner.playback.interlaced_from_format("1080i") is True
+
+#============================================
+
+def test_interlaced_from_format_720p_is_false() -> None:
+	"""interlaced_from_format returns False for a label ending in 'p'."""
+	assert tuner.playback.interlaced_from_format("720p") is False
+
+#============================================
+
+def test_interlaced_from_format_empty_is_false() -> None:
+	"""interlaced_from_format returns False for an empty label (the failed-probe path)."""
+	assert tuner.playback.interlaced_from_format("") is False
+
+#============================================
+
+def test_interlace_for_playback_empty_label_known_interlaced_fallback() -> None:
+	"""interlace_for_playback with empty label falls back to the known-interlaced table."""
+	# pick a real member of the fallback table rather than hardcoding a guide number
+	known = next(iter(tuner.playback.KNOWN_INTERLACED_GUIDE_NUMBERS))
+	assert tuner.playback.interlace_for_playback("", known) is True
+
+#============================================
+
+def test_interlace_for_playback_label_wins_over_fallback() -> None:
+	"""interlace_for_playback uses the label when non-empty, ignoring the fallback table."""
+	# a known-interlaced guide number, but a progressive label should win
+	known = next(iter(tuner.playback.KNOWN_INTERLACED_GUIDE_NUMBERS))
+	assert tuner.playback.interlace_for_playback("720p", known) is False

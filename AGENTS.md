@@ -1,9 +1,24 @@
-## Coding Style
-See Python coding style in docs/PYTHON_STYLE.md.
-See Markdown style in docs/MARKDOWN_STYLE.md.
-See repo style in docs/REPO_STYLE.md.
-When making edits, document them in docs/CHANGELOG.md.
+## Coding style
 
-## Python Environment
-AI agents (Codex/Claude) must run Python using `source source_me.sh && python3` (use Python 3.12 only).
-On this user's macOS (Homebrew Python 3.12), Python modules are installed to `/opt/homebrew/lib/python3.12/site-packages/`.
+- docs/PYTHON_STYLE.md
+- docs/MARKDOWN_STYLE.md
+- docs/REPO_STYLE.md
+- When making edits, document them in docs/CHANGELOG.md.
+
+## Project docs
+
+- docs/CODE_ARCHITECTURE.md -- system design and components
+- docs/FILE_STRUCTURE.md -- directory map and what belongs where
+- docs/INSTALL.md -- setup steps and dependencies
+- docs/USAGE.md -- how to run the tool and CLI examples
+
+## Python environment
+
+AI agents must run Python using `source source_me.sh && python3` (Python 3.12 only).
+Homebrew Python 3.12 site-packages: `/opt/homebrew/lib/python3.12/site-packages/`.
+
+## Tests
+
+- `pytest tests/` for fast unit and integration tests
+- See docs/PYTEST_STYLE.md for test rules and failure triage.
+- See docs/E2E_TESTS.md for slow end-to-end tests (not run via pytest).

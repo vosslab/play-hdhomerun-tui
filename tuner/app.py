@@ -2,11 +2,12 @@
 
 This module ties the data, state, and playback modules into a modeless,
 zero-config channel picker.  The standard path is: run, auto-discover,
-auto-fetch the lineup, sort into Favorites / Frequent / All channels blocks,
-arrow + Enter to launch mpv detached, and stay live.
+auto-fetch the lineup, sort into Favorites / All channels blocks, arrow +
+Enter to launch mpv detached, and stay live.
 
-Two pure module-level helpers (format_reception and format_guide_number) hold
-the row-rendering logic so it is unit-testable without instantiating the app.
+Pure module-level helpers (format_guide_number, render_channel_row, and the
+column-layout helpers) hold the row-rendering logic so it is unit-testable
+without instantiating the app.
 """
 
 # Standard Library
@@ -16,6 +17,8 @@ import textwrap
 import textual
 import textual.app
 import textual.binding
+import textual.containers
+import textual.screen
 import textual.widgets
 
 # local repo modules
@@ -31,40 +34,59 @@ import tuner.playback
 _RECEPTION_GREEN_MIN = 80
 _RECEPTION_YELLOW_MIN = 60
 
-# Persistent footer text listing the main key bindings.
-_FOOTER_TEXT = "Enter/p play | f favorite | r refresh | q quit"
+# Fixed column widths for columns that do not flex.
+# Cursor: ">" or " " -- width 1
+_CURSOR_WIDTH = 1
+# Fav: "*" or " " -- width 1, but header title "Fav" is 3 chars; column width
+# must accommodate the title.  Width 3 lets "Fav" fit and the marker stays
+# left-aligned beneath it (padded with trailing spaces in both header and row).
+_FAV_WIDTH = 3
+# Alias: short user label like "CBS", "FOX"; 6 chars leaves room for 5-char labels
+_ALIAS_WIDTH = 6
+# Format: "1080i" or "720p" are both 5 chars; header "Format" is 6 -- use 6
+_FORMAT_WIDTH = 6
+# Quality / Strength: max value 100 (3 digits); header "Quality"=7, "Strength"=8
+_QUALITY_WIDTH = 7
+_STRENGTH_WIDTH = 8
+# Plays: header "Plays" is 5 chars; counts rarely exceed 4 digits -- use 5
+_PLAYS_WIDTH = 5
 
-#============================================
+# Maximum total row width; Name column absorbs the remaining slack.
+_MAX_ROW_WIDTH = 100
 
-def format_reception(signal_quality: int | None, signal_strength: int | None) -> str:
-	"""Build the compact reception field 'Q<quality>/S<strength>'.
+# Cap on name column width: let Name stay generous but bounded.
+_NAME_WIDTH_CAP = 30
 
-	Quality is shown first because it predicts playback stability better than
-	strength.  A missing value is omitted (no placeholder); when both values are
-	absent the field is an empty string.  This is the raw-text logic only, so it
-	is assertable without the TUI; color is applied separately as markup.
+# Single space separator between every adjacent column pair.
+_SEP = " "
 
-	Args:
-		signal_quality: SignalQuality int from the lineup, or None when absent.
-		signal_strength: SignalStrength int from the lineup, or None when absent.
+# Arrow glyphs for the footer help bar, written as unicode escapes so the
+# source file stays pure ASCII and passes test_ascii_compliance.
+_UP_ARROW = "\u2191"
+_DOWN_ARROW = "\u2193"
 
-	Returns:
-		A string like 'Q80/S63', 'Q80', 'S63', or '' when both are None.
-	"""
-	parts: list[str] = []
-	# quality first, since it better predicts playback stability
-	if signal_quality is not None:
-		parts.append(f"Q{signal_quality}")
-	if signal_strength is not None:
-		parts.append(f"S{signal_strength}")
-	# join with a slash so 'Q80/S63'; a single present value has no slash
-	reception_text = "/".join(parts)
-	return reception_text
+# Main-list footer help text.  Key tokens are accent-colored via Rich markup;
+# action labels are dim.  The combined "Enter/p" token is one accent region.
+_FOOTER_MAIN = (
+	f"[bold cyan]{_UP_ARROW}/{_DOWN_ARROW}[/bold cyan][dim] move   [/dim]"
+	"[bold cyan]Enter/p[/bold cyan][dim] play   [/dim]"
+	"[bold cyan]f[/bold cyan][dim] favorite   [/dim]"
+	"[bold cyan]a[/bold cyan][dim] alias   [/dim]"
+	"[bold cyan]r[/bold cyan][dim] refresh   [/dim]"
+	"[bold cyan]q[/bold cyan][dim] quit[/dim]"
+)
+
+# Alias-popup footer help text shown while the popup is open.  Only the popup
+# keys are listed; the main-list keys are inactive while the popup owns focus.
+_FOOTER_ALIAS = (
+	"[bold cyan]Enter[/bold cyan][dim] save   [/dim]"
+	"[bold cyan]Esc[/bold cyan][dim] cancel[/dim]"
+)
 
 #============================================
 
 def reception_color(signal_quality: int | None) -> str:
-	"""Pick a subtle color name for the reception field based on quality.
+	"""Pick a subtle color name for the Quality cell based on signal quality.
 
 	Args:
 		signal_quality: SignalQuality int from the lineup, or None when absent.
@@ -126,6 +148,106 @@ def major_width_for_channels(channels: list[tuner.models.Channel]) -> int:
 
 #============================================
 
+def name_width_for_channels(channels: list[tuner.models.Channel], cap: int) -> int:
+	"""Compute the name column width from the channel set, bounded by a cap.
+
+	The name column absorbs leftover space after fixed columns are allocated.
+	This helper computes how much space is truly needed (longest name), but
+	callers should also check against _remaining_name_width so the total row
+	stays under _MAX_ROW_WIDTH.
+
+	Args:
+		channels: Visible channels whose guide names drive the minimum width.
+		cap: Upper bound on the name column width.
+
+	Returns:
+		The character width of the widest guide name, clamped to [1, cap].
+	"""
+	width = 1
+	for channel in channels:
+		name_len = len(channel.guide_name)
+		if name_len > width:
+			width = name_len
+	# clamp to cap
+	if width > cap:
+		width = cap
+	return width
+
+#============================================
+
+def _remaining_name_width(major_width: int) -> int:
+	"""Compute the name-column width that keeps total row width under _MAX_ROW_WIDTH.
+
+	Column layout (each separated by _SEP=" "):
+	  cursor(_CURSOR_WIDTH) sep fav(_FAV_WIDTH) sep Ch(major_width+3) sep
+	  alias(_ALIAS_WIDTH) sep name(?) sep format(_FORMAT_WIDTH) sep
+	  quality(_QUALITY_WIDTH) sep strength(_STRENGTH_WIDTH) sep plays(_PLAYS_WIDTH)
+
+	The eight separators between nine columns account for one space each.
+	The name column absorbs whatever is left.
+
+	Args:
+		major_width: The dot-justified guide-number major-part width.
+
+	Returns:
+		Characters available for the Name column (at least 1).
+	"""
+	# Ch column: major_width (major) + 1 (dot) + 2 (minor ljust(2))
+	ch_width = major_width + 1 + 2
+	# sum of all fixed column widths (everything except name)
+	fixed_cols = (
+		_CURSOR_WIDTH + _FAV_WIDTH + ch_width + _ALIAS_WIDTH
+		+ _FORMAT_WIDTH + _QUALITY_WIDTH + _STRENGTH_WIDTH + _PLAYS_WIDTH
+	)
+	# 8 separators between the 9 columns (cursor/fav/ch/alias/name/format/quality/strength/plays)
+	num_separators = 8
+	fixed = fixed_cols + num_separators
+
+	remaining = _MAX_ROW_WIDTH - fixed
+	if remaining < 1:
+		remaining = 1
+	return remaining
+
+#============================================
+
+def _pad_text(text: str, width: int) -> str:
+	"""Left-align text in a cell of exactly width characters, truncating if needed.
+
+	Args:
+		text: The text to fit in the cell.
+		width: Target cell width in characters.
+
+	Returns:
+		A string of exactly width characters (padded with spaces or truncated).
+	"""
+	if len(text) > width:
+		# truncate to width
+		result = text[:width]
+	else:
+		# pad with trailing spaces
+		result = text.ljust(width)
+	return result
+
+#============================================
+
+def _num_cell(value: int | None, width: int) -> str:
+	"""Right-align an integer in a cell of exactly width characters, or blank.
+
+	Args:
+		value: Integer to display, or None to show a blank cell.
+		width: Target cell width in characters.
+
+	Returns:
+		A string of exactly width characters: right-aligned number or spaces.
+	"""
+	if value is None:
+		return " " * width
+	# right-align the number string to the cell width
+	result = str(value).rjust(width)
+	return result
+
+#============================================
+
 def _escape_markup(text: str) -> str:
 	"""Escape square brackets so guide names cannot break Textual markup.
 
@@ -141,46 +263,256 @@ def _escape_markup(text: str) -> str:
 
 #============================================
 
+def column_header_line(major_width: int, name_width: int, alias_width: int) -> str:
+	"""Build the dim column-header text aligned to the same widths the rows use.
+
+	Uses the identical column ordering and separator (_SEP) as render_channel_row
+	so header and data rows share a single layout source of truth.
+
+	Column order: cursor, fav, Ch, alias, name, format, quality, strength, plays.
+	The cursor column header is blank (no title for the ">" indicator).
+	The fav column is width _FAV_WIDTH=3 so the title "Fav" fits exactly.
+	All numeric columns (format, quality, strength, plays) are right-aligned.
+	Text columns (alias, name) are left-aligned.
+
+	Args:
+		major_width: Major-part width for the Ch column (from major_width_for_channels).
+		name_width: Name column width (from name_width_for_channels clamped to budget).
+		alias_width: Alias column width (fixed _ALIAS_WIDTH).
+
+	Returns:
+		A plain-text header string with column titles at the right positions,
+		wrapped in dim markup.
+	"""
+	# Ch column width: major digits + dot + 2 minor digits
+	ch_col_width = major_width + 1 + 2
+
+	# Build header cells using the exact same column order and separator as render_channel_row.
+	# cursor column: blank (no title for the ">" marker)
+	cursor_cell = " " * _CURSOR_WIDTH
+	# fav column: left-aligned "Fav" in _FAV_WIDTH (width 3, so it fits exactly)
+	fav_cell = _pad_text("Fav", _FAV_WIDTH)
+	# Ch column: right-align "Ch" over the dot-justified guide number
+	ch_cell = "Ch".rjust(ch_col_width)
+	# alias column: left-aligned title
+	alias_cell = _pad_text("Alias", alias_width)
+	# name column: left-aligned title
+	name_cell = _pad_text("Name", name_width)
+	# format column: right-aligned title
+	format_cell = "Format".rjust(_FORMAT_WIDTH)
+	# quality column: right-aligned title
+	quality_cell = "Quality".rjust(_QUALITY_WIDTH)
+	# strength column: right-aligned title
+	strength_cell = "Strength".rjust(_STRENGTH_WIDTH)
+	# plays column: right-aligned title
+	plays_cell = "Plays".rjust(_PLAYS_WIDTH)
+
+	# join with the same single-space separator (_SEP) used in render_channel_row
+	header = _SEP.join([
+		cursor_cell,
+		fav_cell,
+		ch_cell,
+		alias_cell,
+		name_cell,
+		format_cell,
+		quality_cell,
+		strength_cell,
+		plays_cell,
+	])
+
+	# wrap the whole line in dim markup
+	dim_header = f"[dim]{header}[/dim]"
+	return dim_header
+
+#============================================
+
 def render_channel_row(
 	channel: tuner.models.Channel,
 	major_width: int,
+	name_width: int,
+	alias_width: int,
+	is_cursor: bool,
 	is_favorite: bool,
+	alias_label: str | None,
+	format_label: str | None,
 	play_count: int,
 ) -> str:
-	"""Build the Textual-markup label text for one channel row.
+	"""Build the Textual-markup label text for one wide fixed-column channel row.
 
-	Layout: star marker, dot-justified guide number, guide name, HD tag, an
-	optional play-count indicator for frequent rows, and the color-coded
-	reception field.
+	Layout left to right: cursor, fav marker, dot-justified Ch, Alias, Name,
+	Format, Quality, Strength, Plays.  All columns hold fixed widths so the
+	header stays aligned regardless of content.
 
 	Args:
-		channel: The channel to render.
+		channel: The channel to render (supplies guide_number, guide_name,
+			signal_quality, signal_strength).
 		major_width: Major-part width for dot-justification.
-		is_favorite: True to show the favorite star marker.
-		play_count: Play count; a positive value adds a small indicator.
+		name_width: Name column width in characters.
+		alias_width: Alias column width in characters.
+		is_cursor: True to show '>' in the cursor column, False for space.
+		is_favorite: True to show '*' in the Fav column.
+		alias_label: Short alias label (e.g. 'CBS'), or None when unset.
+		format_label: Cached format label (e.g. '1080i'), or None when uncached.
+		play_count: Play count; zero renders as blank.
 
 	Returns:
 		A single line of Textual markup for a ListItem label.
 	"""
-	# star marker column: a filled star for favorites, a space otherwise
-	star = "*" if is_favorite else " "
-	number_text = format_guide_number(channel.guide_number, major_width)
-	name_text = _escape_markup(channel.guide_name)
-	# HD tag only when the channel reports HD
-	hd_text = " HD" if channel.hd else ""
-	# play-count indicator only for channels with history
-	count_text = f"  ({play_count}x)" if play_count > 0 else ""
+	# cursor column: ">" for the highlighted row, space otherwise; width _CURSOR_WIDTH=1
+	cursor_cell = ">" if is_cursor else " "
 
-	reception_text = format_reception(channel.signal_quality, channel.signal_strength)
-	if reception_text:
-		color = reception_color(channel.signal_quality)
-		reception_markup = f"  [{color}]{reception_text}[/{color}]"
-	else:
-		reception_markup = ""
+	# fav column: left-aligned "*" or " " in _FAV_WIDTH=3 so it aligns under "Fav" title
+	fav_marker = "*" if is_favorite else " "
+	fav_cell = _pad_text(fav_marker, _FAV_WIDTH)
 
-	# assemble the row, then return the variable (no work in the return statement)
-	row = f"{star} {number_text}  {name_text}{hd_text}{count_text}{reception_markup}"
+	# Ch column: dot-justified guide number (major_width + dot + 2 minor digits)
+	ch_cell = format_guide_number(channel.guide_number, major_width)
+
+	# alias cell: left-aligned, blank when None
+	alias_cell = _pad_text(alias_label if alias_label is not None else "", alias_width)
+
+	# name cell: escape markup chars, then pad/truncate to name_width
+	raw_name = _escape_markup(channel.guide_name)
+	name_cell = _pad_text(raw_name, name_width)
+
+	# format cell: right-aligned label in _FORMAT_WIDTH, spaces when None
+	format_raw = format_label if format_label is not None else ""
+	format_cell = format_raw.rjust(_FORMAT_WIDTH)
+
+	# quality cell: right-aligned number, spaces when None; color markup added below
+	quality_color = reception_color(channel.signal_quality)
+	quality_plain = _num_cell(channel.signal_quality, _QUALITY_WIDTH)
+	# wrap quality in color markup (does not consume display width)
+	quality_cell = f"[{quality_color}]{quality_plain}[/{quality_color}]"
+
+	# strength cell: right-aligned number, spaces when None; no color
+	strength_cell = _num_cell(channel.signal_strength, _STRENGTH_WIDTH)
+
+	# plays cell: right-aligned count, spaces when zero
+	plays_value: int | None = play_count if play_count > 0 else None
+	plays_cell = _num_cell(plays_value, _PLAYS_WIDTH)
+
+	# join cells with a single-space separator -- matches column_header_line exactly
+	row = _SEP.join([
+		cursor_cell,
+		fav_cell,
+		ch_cell,
+		alias_cell,
+		name_cell,
+		format_cell,
+		quality_cell,
+		strength_cell,
+		plays_cell,
+	])
 	return row
+
+#============================================
+
+class AliasPopup(textual.screen.ModalScreen):
+	"""Small modal popup for editing the alias label of one channel.
+
+	Opens when the user presses 'a' on a channel row.  Contains a short info
+	label naming the channel and a single Input widget prefilled with the
+	current alias.  Enter saves; Esc cancels.  While open it owns the keyboard
+	so main-list bindings (play, favorite, quit, etc.) do not fire.
+	"""
+
+	# Minimal CSS to size and centre the popup panel.
+	DEFAULT_CSS = """
+	AliasPopup {
+		align: center middle;
+	}
+	AliasPopup > #alias_panel {
+		width: 50;
+		height: auto;
+		padding: 1 2;
+		background: $surface;
+		border: solid $primary;
+	}
+	AliasPopup > #alias_panel > #alias_help {
+		height: 1;
+		color: $text-muted;
+	}
+	"""
+
+	# Esc dismisses without saving; no other bindings needed because the Input
+	# widget handles Enter natively via its Submitted message.
+	BINDINGS = [
+		textual.binding.Binding("escape", "dismiss_cancel", "cancel", show=False),
+	]
+
+	def __init__(
+		self,
+		guide_number: str,
+		guide_name: str,
+		current_alias: str | None,
+	) -> None:
+		"""Initialise the popup.
+
+		Args:
+			guide_number: Guide number of the channel being edited (e.g. '7.1').
+			guide_name: Display name of the channel (e.g. 'WLS-HD').
+			current_alias: The existing alias to prefill the input, or None.
+		"""
+		super().__init__()
+		# channel identity fields used to label the popup and return the result
+		self._guide_number = guide_number
+		self._guide_name = guide_name
+		# prefill value; empty string when no alias is set yet
+		self._current_alias = current_alias if current_alias is not None else ""
+
+	#============================================
+
+	def compose(self) -> textual.app.ComposeResult:
+		"""Build the popup widget tree: info label, input, help line.
+
+		Returns:
+			The Textual compose result yielding the popup's widgets.
+		"""
+		with textual.containers.Container(id="alias_panel"):
+			# info label: names the channel so the user knows what they are editing
+			info_text = (
+				f"[bold]{self._guide_number}[/bold] "
+				f"{_escape_markup(self._guide_name)}"
+			)
+			yield textual.widgets.Label(info_text, id="alias_info")
+			# single text input; prefilled with the current alias (empty if none)
+			yield textual.widgets.Input(
+				value=self._current_alias,
+				placeholder="alias (empty to clear)",
+				id="alias_input",
+			)
+			# one-line help: accent Enter and Esc, dim action labels
+			yield textual.widgets.Static(_FOOTER_ALIAS, id="alias_help")
+
+	#============================================
+
+	def on_mount(self) -> None:
+		"""Focus the Input widget as soon as the popup is mounted."""
+		# direct focus to the input so the user can type immediately
+		self.query_one("#alias_input", textual.widgets.Input).focus()
+
+	#============================================
+
+	def on_input_submitted(self, event: textual.widgets.Input.Submitted) -> None:
+		"""Handle Enter in the Input: dismiss and return the entered value.
+
+		An empty value signals an alias clear; the caller handles that via
+		state.set_alias which treats an empty string as a delete.
+
+		Args:
+			event: The Input.Submitted message carrying the final value.
+		"""
+		# return the stripped value to the caller via dismiss
+		self.dismiss(event.value.strip())
+
+	#============================================
+
+	def action_dismiss_cancel(self) -> None:
+		"""Dismiss the popup without saving (Esc path)."""
+		# None signals cancel to the callback in HDHRApp.action_alias
+		self.dismiss(None)
+
 
 #============================================
 
@@ -194,7 +526,10 @@ class HDHRApp(textual.app.App):
 	quits, so the user never gets stuck.
 	"""
 
-	# CSS keeps the status line and footer visually distinct from the list.
+	# CSS keeps the status line, header, and footer visually distinct from the list.
+	# The highlight-bar suppression targets the .-highlight pseudo-class that Textual
+	# adds to the focused ListItem; both the focused (ListView:focus) and blurred
+	# variants are reset so the ">" cursor glyph is the only selection indicator.
 	CSS = textwrap.dedent(
 		"""
 		#status {
@@ -202,12 +537,37 @@ class HDHRApp(textual.app.App):
 			padding: 0 1;
 			color: $text;
 		}
+		#col_header {
+			height: 1;
+			padding: 0 1;
+			color: $text-muted;
+		}
 		#channel_list {
 			height: 1fr;
+		}
+		/* Suppress the default full-width highlighted-row background.
+		   Textual 8.x uses .-highlight on the ListItem for the selection bar;
+		   we clear background, foreground override, and text-style so the row
+		   reads exactly like un-highlighted rows and only the ">" glyph stands out. */
+		#channel_list > ListItem.-highlight {
+			background: transparent;
+			color: $foreground;
+			text-style: none;
+		}
+		/* Also suppress the focused-state variant, which is the primary bar. */
+		#channel_list:focus > ListItem.-highlight {
+			background: transparent;
+			color: $foreground;
+			text-style: none;
+		}
+		/* Dim the .block-header section-header rows so they read as labels, not data. */
+		.block-header {
+			color: $text-muted;
 		}
 		#footer {
 			height: 1;
 			padding: 0 1;
+			border-top: solid $panel-lighten-1;
 			background: $panel;
 			color: $text-muted;
 		}
@@ -220,6 +580,7 @@ class HDHRApp(textual.app.App):
 	BINDINGS = [
 		textual.binding.Binding("p", "play", "play"),
 		textual.binding.Binding("f", "favorite", "favorite"),
+		textual.binding.Binding("a", "alias", "alias"),
 		textual.binding.Binding("r", "refresh", "refresh"),
 		textual.binding.Binding("q", "quit", "quit"),
 	]
@@ -241,21 +602,25 @@ class HDHRApp(textual.app.App):
 		self._visible_channels: list[tuner.models.Channel] = []
 		# computed major width for dot-justification of the visible set
 		self._major_width = 1
+		# computed name column width for the visible set
+		self._name_width = _NAME_WIDTH_CAP
 
 	#============================================
 
 	def compose(self) -> textual.app.ComposeResult:
-		"""Build the widget tree: status line, channel list, persistent footer.
+		"""Build the widget tree: status line, column header, channel list, footer.
 
 		Returns:
 			The Textual compose result yielding the app's widgets.
 		"""
 		# status line communicates the current screen state to the user
 		yield textual.widgets.Static("Looking for HDHomeRun...", id="status")
+		# persistent dim column header; rebuilt after lineup load and refresh
+		yield textual.widgets.Static("", id="col_header")
 		# the single channel list; Up/Down move the highlight natively
 		yield textual.widgets.ListView(id="channel_list")
-		# persistent footer of the main key bindings
-		yield textual.widgets.Static(_FOOTER_TEXT, id="footer")
+		# persistent footer of the main key bindings, accent-colored key tokens
+		yield textual.widgets.Static(_FOOTER_MAIN, id="footer")
 
 	#============================================
 
@@ -274,6 +639,16 @@ class HDHRApp(textual.app.App):
 		"""
 		status = self.query_one("#status", textual.widgets.Static)
 		status.update(message)
+
+	#============================================
+
+	def _rebuild_header(self) -> None:
+		"""Rebuild the column header Static to match the current column widths."""
+		header_text = column_header_line(
+			self._major_width, self._name_width, _ALIAS_WIDTH
+		)
+		col_header = self.query_one("#col_header", textual.widgets.Static)
+		col_header.update(header_text)
 
 	#============================================
 
@@ -330,13 +705,14 @@ class HDHRApp(textual.app.App):
 		"""
 		self._device = device
 		self._state = state
-		self._render_blocks(channels)
+		# render in a worker so the awaited clear() runs before the rows are extended
+		self.run_worker(self._rerender(channels), group="render", exclusive=True)
 		self._set_status(f"Ready - {device.friendly_name} ({len(channels)} channels)")
 
 	#============================================
 
-	def _render_blocks(self, channels: list[tuner.models.Channel]) -> None:
-		"""Sort channels into blocks and (re)populate the ListView.
+	async def _render_blocks(self, channels: list[tuner.models.Channel]) -> None:
+		"""Sort channels into two blocks and (re)populate the ListView.
 
 		Empty blocks are hidden (no header is shown for them).  The highlight is
 		left at the top after a full render; callers that need to preserve the
@@ -345,68 +721,159 @@ class HDHRApp(textual.app.App):
 		Args:
 			channels: The full channel lineup to sort and display.
 		"""
-		# state is always present once the lineup is ready
+		# state is set once the lineup is ready; guard like _repaint_cursor so a
+		# stray render before load is a no-op rather than an AttributeError
+		if self._state is None:
+			return
 		state = self._state
-		favorites, frequent, all_channels = state.sort_blocks(channels)
+		favorites, all_channels = state.sort_blocks(channels)
 
-		# the visible set is the concatenation of the three blocks, in order
+		# the visible set is the concatenation of the two blocks, in order
 		visible: list[tuner.models.Channel] = []
 		visible.extend(favorites)
-		visible.extend(frequent)
 		visible.extend(all_channels)
 		self._visible_channels = visible
 		self._major_width = major_width_for_channels(visible)
 
-		list_view = self.query_one("#channel_list", textual.widgets.ListView)
-		list_view.clear()
+		# name column width: clamped to the layout budget and the name-width cap
+		content_name_width = name_width_for_channels(visible, _NAME_WIDTH_CAP)
+		budget_name_width = _remaining_name_width(self._major_width)
+		self._name_width = min(content_name_width, budget_name_width)
+		if self._name_width < 1:
+			self._name_width = 1
 
-		# append a non-selectable header row for each non-empty block, then its rows
-		self._append_block(list_view, "Favorites", favorites)
-		self._append_block(list_view, "Frequent", frequent)
-		self._append_block(list_view, "All channels", all_channels)
+		# build all items first, then mutate the DOM in two awaited steps
+		items = self._build_block_items("Favorites", favorites)
+		items.extend(self._build_block_items("All channels", all_channels))
+
+		list_view = self.query_one("#channel_list", textual.widgets.ListView)
+		# clear() and extend() are asynchronous: await each so the old rows leave the
+		# DOM before the new rows are added, otherwise re-renders collide on duplicate
+		# ListItem ids (e.g. "ch_2_1") and Textual raises DuplicateIds
+		await list_view.clear()
+		await list_view.extend(items)
 
 	#============================================
 
-	def _append_block(
+	async def _rerender(
 		self,
-		list_view: textual.widgets.ListView,
-		title: str,
 		channels: list[tuner.models.Channel],
+		select_guide: str | None = None,
 	) -> None:
-		"""Append a block header and its channel rows to the list view.
+		"""Re-render the blocks, rebuild the header, restore selection, paint cursor.
 
-		Empty blocks are skipped entirely so first run shows only All channels.
+		Runs as a worker coroutine so the awaited ListView.clear() completes before
+		rows are re-appended.  Sync handlers launch this via run_worker.
 
 		Args:
-			list_view: The ListView to append to.
+			channels: The channel lineup to render.
+			select_guide: Guide number to re-highlight after the render, or None to
+				leave the highlight at the top.
+		"""
+		await self._render_blocks(channels)
+		self._rebuild_header()
+		# the first list item is the disabled block header, so the highlight must be
+		# moved onto a real channel row: a header-highlighted state is never valid UX.
+		# Restore the requested channel when possible; otherwise default to the first
+		# visible channel.  _visible_channels is favorites followed by all channels, so
+		# index 0 is the first favorite when any favorites exist and the first channel
+		# otherwise -- exactly the desired default.  The guide number is read from the
+		# data, never assumed, so no specific channel (e.g. 2.1) is hard-coded.
+		restored = False
+		if select_guide is not None:
+			restored = self._select_channel_by_guide_number(select_guide)
+		if not restored and self._visible_channels:
+			self._select_channel_by_guide_number(self._visible_channels[0].guide_number)
+		# paint the ">" cursor on the highlighted row after the re-render
+		self._repaint_cursor()
+
+	#============================================
+
+	def _row_markup(
+		self,
+		channel: tuner.models.Channel,
+		is_cursor: bool,
+		favorites: frozenset,
+		play_counts: dict,
+	) -> str:
+		"""Assemble the markup for one channel row from current state.
+
+		Shared by _build_block_items (initial build) and _repaint_cursor (cursor
+		repaint) so the per-row column data is gathered in exactly one place and
+		the two paths cannot drift apart when a column is added.
+
+		Args:
+			channel: The channel to render.
+			is_cursor: True to show the ">" cursor on this row.
+			favorites: The current favorites set (prefetched once by the caller).
+			play_counts: The current play-count map (prefetched once by the caller).
+
+		Returns:
+			The Textual-markup text for the row's Label.
+		"""
+		is_favorite = channel.guide_number in favorites
+		# play count is genuinely optional: zero for channels never played
+		play_count = play_counts.get(channel.guide_number, 0)
+		# format label is None until the channel is launched and probed once
+		format_label = self._state.format_label(channel.guide_number)
+		# alias is None unless the user set one in the popup
+		alias_label = self._state.alias(channel.guide_number)
+		row_text = render_channel_row(
+			channel=channel,
+			major_width=self._major_width,
+			name_width=self._name_width,
+			alias_width=_ALIAS_WIDTH,
+			is_cursor=is_cursor,
+			is_favorite=is_favorite,
+			alias_label=alias_label,
+			format_label=format_label,
+			play_count=play_count,
+		)
+		return row_text
+
+	#============================================
+
+	def _build_block_items(
+		self,
+		title: str,
+		channels: list[tuner.models.Channel],
+	) -> list[textual.widgets.ListItem]:
+		"""Build the ListItems for one block: a dim header plus its channel rows.
+
+		Empty blocks return an empty list so first run shows only All channels.
+
+		Args:
 			title: The block header text.
 			channels: The channels in this block (already sorted).
+
+		Returns:
+			ListItems for this block (header first, then one per channel), or an
+			empty list when the block has no channels.
 		"""
 		# hide empty blocks: no header, no rows
 		if not channels:
-			return
+			return []
+
+		items: list[textual.widgets.ListItem] = []
 		# header row is disabled so it cannot be highlighted or selected
-		header_label = textual.widgets.Label(f"[b]{title}[/b]")
+		header_label = textual.widgets.Label(f"[dim][b]{title}[/b][/dim]")
 		header_item = textual.widgets.ListItem(header_label, disabled=True)
 		header_item.add_class("block-header")
-		list_view.append(header_item)
+		items.append(header_item)
 
+		# prefetch the favorites set and play-count map once for the whole block
 		state = self._state
 		play_counts = state.play_counts
 		favorites = state.favorites
 		for channel in channels:
-			is_favorite = channel.guide_number in favorites
-			# default count to 0 for channels with no recorded history
-			play_count = play_counts.get(channel.guide_number, 0)
-			row_text = render_channel_row(
-				channel, self._major_width, is_favorite, play_count
-			)
+			# cursor is not set at build time; _repaint_cursor handles it after mount
+			row_text = self._row_markup(channel, False, favorites, play_counts)
 			row_label = textual.widgets.Label(row_text)
 			# id encodes the guide number so selection maps back to a channel;
 			# dots are not valid in ids, so encode them as underscores
 			row_id = "ch_" + channel.guide_number.replace(".", "_")
-			row_item = textual.widgets.ListItem(row_label, id=row_id)
-			list_view.append(row_item)
+			items.append(textual.widgets.ListItem(row_label, id=row_id))
+		return items
 
 	#============================================
 
@@ -434,7 +901,7 @@ class HDHRApp(textual.app.App):
 
 	#============================================
 
-	def _select_channel_by_guide_number(self, guide_number: str) -> None:
+	def _select_channel_by_guide_number(self, guide_number: str) -> bool:
 		"""Move the highlight to the row matching a guide number, if present.
 
 		Used after a favorite toggle re-sorts the blocks so the highlight stays
@@ -442,13 +909,86 @@ class HDHRApp(textual.app.App):
 
 		Args:
 			guide_number: The guide number to re-highlight.
+
+		Returns:
+			True when a matching channel row was found and highlighted, False
+			when no row matched (e.g. the channel left the lineup).
 		"""
 		list_view = self.query_one("#channel_list", textual.widgets.ListView)
 		target_id = "ch_" + guide_number.replace(".", "_")
 		for index, item in enumerate(list_view.children):
 			if item.id == target_id:
 				list_view.index = index
-				return
+				return True
+		return False
+
+	#============================================
+
+	def _repaint_cursor(self) -> None:
+		"""Repaint the cursor cell (">" or " ") on every visible channel row.
+
+		Walks the ListView's children, identifies channel rows by their "ch_"
+		id prefix, and re-renders each row's Label with is_cursor set only for
+		the row matching the currently highlighted item.  Block-header rows
+		(disabled, no "ch_" id) are skipped entirely.
+
+		Called after every highlight change (on_list_view_highlighted), after a
+		favorite-toggle re-sort, after an alias save re-render, and after the
+		initial lineup render so the first row shows the cursor immediately.
+		"""
+		list_view = self.query_one("#channel_list", textual.widgets.ListView)
+		highlighted = list_view.highlighted_child
+
+		# determine which row id currently holds the cursor (may be None)
+		highlighted_id: str | None = None
+		if highlighted is not None and highlighted.id is not None:
+			if highlighted.id.startswith("ch_"):
+				highlighted_id = highlighted.id
+
+		# build a lookup: guide_number -> Channel for quick per-row access
+		channel_by_guide: dict[str, tuner.models.Channel] = {}
+		for channel in self._visible_channels:
+			channel_by_guide[channel.guide_number] = channel
+
+		# we need state for per-row data; if state is not ready yet, nothing to paint
+		if self._state is None:
+			return
+
+		state = self._state
+		play_counts = state.play_counts
+		favorites = state.favorites
+
+		# walk every item in the list; only process channel rows (id starts with "ch_")
+		for item in list_view.children:
+			if item.id is None or not item.id.startswith("ch_"):
+				# block-header or non-channel item -- skip
+				continue
+			# decode the guide number from the row id (e.g. "ch_24_10" -> "24.10")
+			guide_number = item.id[len("ch_"):].replace("_", ".")
+			channel = channel_by_guide.get(guide_number)
+			if channel is None:
+				# stale row (channel vanished from visible set) -- skip
+				continue
+
+			# determine cursor state for this row, then re-render via the shared helper
+			is_cursor = item.id == highlighted_id
+			row_text = self._row_markup(channel, is_cursor, favorites, play_counts)
+			# update the Label inside the ListItem
+			label = item.query_one(textual.widgets.Label)
+			label.update(row_text)
+
+	#============================================
+
+	def on_list_view_highlighted(
+		self, event: textual.widgets.ListView.Highlighted
+	) -> None:
+		"""Repaint the cursor glyph when the ListView highlight moves.
+
+		Args:
+			event: The ListView.Highlighted message (unused; we query the widget).
+		"""
+		# repaint so ">" follows the new highlighted row
+		self._repaint_cursor()
 
 	#============================================
 
@@ -466,13 +1006,13 @@ class HDHRApp(textual.app.App):
 	#============================================
 
 	def action_play(self) -> None:
-		"""Play the highlighted channel: record, probe interlace, launch detached."""
+		"""Play the highlighted channel: record, probe format, launch detached."""
 		channel = self._highlighted_channel()
 		# nothing to do on status screens or empty selection
 		if channel is None:
 			return
 		state = self._state
-		# record the selection immediately so frequent ordering reflects intent
+		# record the selection immediately so play counts reflect intent
 		state.record_selection(channel.guide_number)
 		self._set_status(
 			f"Starting {channel.guide_number} {channel.guide_name} "
@@ -486,21 +1026,33 @@ class HDHRApp(textual.app.App):
 
 	@textual.work(thread=True)
 	def _probe_and_launch(self, channel: tuner.models.Channel) -> None:
-		"""Detect interlace (cached), then launch mpv detached, in a thread.
+		"""Detect stream format (cached), then launch mpv detached, in a thread.
+
+		Reads the cached format label from state; when absent, runs probe_format
+		and caches a non-empty result.  Derives the interlace decision via
+		interlace_for_playback so a blank label falls back to the known-interlaced
+		table and playback always works.
 
 		Args:
 			channel: The channel to probe and launch.
 		"""
-		# use the cached verdict when present so repeat launches skip the ~6s probe
-		verdict = self._state.interlace_verdict(channel.guide_number)
-		if verdict is None:
-			# first time for this channel: probe off the event loop, then cache it
-			verdict = tuner.playback.is_interlaced(
-				channel.stream_url, channel.guide_number
-			)
-			self._state.set_interlace(channel.guide_number, verdict)
+		# use the cached format label when present; avoids re-probing on repeat launches
+		label = self._state.format_label(channel.guide_number)
+		if label is None:
+			# first launch for this channel: probe off the event loop
+			label = tuner.playback.probe_format(channel.stream_url, channel.guide_number)
+			if label:
+				# only cache confident, non-empty labels; blank means probe failed
+				self._state.set_format(channel.guide_number, label)
+			# when label is still empty string, interlace_for_playback falls back
+			# to KNOWN_INTERLACED_GUIDE_NUMBERS so playback still works correctly
+
+		# label is now always a string: a cached label, a fresh probe result, or ""
+		# from a failed probe.  An empty label makes interlace_for_playback fall back
+		# to KNOWN_INTERLACED_GUIDE_NUMBERS so playback still works correctly.
+		interlaced = tuner.playback.interlace_for_playback(label, channel.guide_number)
 		# launch detached; a non-None return is a concise launch-time error
-		launch_error = tuner.playback.launch(channel, verdict)
+		launch_error = tuner.playback.launch(channel, interlaced)
 		self.call_from_thread(self._on_launched, channel, launch_error)
 
 	#============================================
@@ -530,9 +1082,62 @@ class HDHRApp(textual.app.App):
 			return
 		# toggle keyed on GuideNumber so look-alike names stay independent
 		self._state.toggle_favorite(channel.guide_number)
-		# re-sort immediately, then keep the highlight on the same channel
-		self._render_blocks(self._visible_channels)
-		self._select_channel_by_guide_number(channel.guide_number)
+		# re-sort in a worker (awaited clear), then keep the highlight on this channel
+		self.run_worker(
+			self._rerender(self._visible_channels, select_guide=channel.guide_number),
+			group="render",
+			exclusive=True,
+		)
+
+	#============================================
+
+	def action_alias(self) -> None:
+		"""Open the alias popup for the highlighted channel.
+
+		Does nothing when the highlight is on a section header or when no channel
+		is highlighted (status screens, empty list).  While the popup is open it
+		owns the keyboard via ModalScreen; list bindings do not fire and 'q' does
+		not quit.  After the popup closes on save, re-renders the list so the
+		Alias cell updates immediately, and restores the highlight to the same
+		channel.
+		"""
+		channel = self._highlighted_channel()
+		# no-op on headers (disabled items without a channel id) or empty list
+		if channel is None:
+			return
+		# snapshot the guide number before pushing the modal (the render may shift indices)
+		guide_number = channel.guide_number
+		guide_name = channel.guide_name
+		current_alias = self._state.alias(guide_number)
+
+		# switch the footer to show the popup's keys while the modal is open
+		footer = self.query_one("#footer", textual.widgets.Static)
+		footer.update(_FOOTER_ALIAS)
+
+		def _on_alias_dismiss(result: str | None) -> None:
+			"""Handle the popup result after it closes.
+
+			Args:
+				result: The stripped alias string on save (may be empty to clear),
+					or None when the user pressed Esc to cancel.
+			"""
+			# restore the main-list help bar regardless of save/cancel
+			footer.update(_FOOTER_MAIN)
+			if result is None:
+				# Esc cancel: no state change, no re-render needed
+				return
+			# save the alias (empty string clears it via set_alias)
+			self._state.set_alias(guide_number, result)
+			# re-render in a worker (awaited clear) so the Alias cell updates and the
+			# highlight returns to the same channel without colliding on row ids
+			self.run_worker(
+				self._rerender(self._visible_channels, select_guide=guide_number),
+				group="render",
+				exclusive=True,
+			)
+
+		popup = AliasPopup(guide_number, guide_name, current_alias)
+		self.push_screen(popup, _on_alias_dismiss)
 
 	#============================================
 
@@ -562,7 +1167,8 @@ class HDHRApp(textual.app.App):
 		Args:
 			channels: The freshly fetched channel lineup.
 		"""
-		self._render_blocks(channels)
+		# render in a worker so the awaited clear() runs before the rows are extended
+		self.run_worker(self._rerender(channels), group="render", exclusive=True)
 		self._set_status(
 			f"Ready - {self._device.friendly_name} ({len(channels)} channels)"
 		)

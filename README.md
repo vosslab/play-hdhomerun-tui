@@ -4,7 +4,11 @@ Zero-config Textual TUI for HDHomeRun OTA tuners: auto-discovers the device on y
 
 ## Documentation
 
+- [docs/INSTALL.md](docs/INSTALL.md): prerequisites, install steps, and verify command.
 - [docs/USAGE.md](docs/USAGE.md): run command, key bindings, and channel list layout.
+- [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md): common failures and how to recover.
+- [docs/CODE_ARCHITECTURE.md](docs/CODE_ARCHITECTURE.md): system design, components, and data flow.
+- [docs/FILE_STRUCTURE.md](docs/FILE_STRUCTURE.md): directory map and where to add new work.
 - [docs/PYTHON_STYLE.md](docs/PYTHON_STYLE.md): Python coding conventions for this repo.
 - [docs/REPO_STYLE.md](docs/REPO_STYLE.md): repo-wide organization and workflow rules.
 
