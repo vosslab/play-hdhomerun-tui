@@ -1,6 +1,6 @@
 # play-hdhomerun-tui
 
-Zero-config Textual TUI for HDHomeRun OTA tuners: auto-discovers the device on your LAN, lists channels with favorites and play history, and launches mpv detached so you can watch both tuners at once.
+A simple terminal app for watching live over-the-air TV from an HDHomeRun tuner. It finds the device on your network automatically, shows your channels with favorites and recent picks, and lets you watch two channels at the same time.
 
 ## Documentation
 

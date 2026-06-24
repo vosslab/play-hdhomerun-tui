@@ -33,6 +33,7 @@
 
 ### Behavior or Interface Changes
 
+- Rewrite `README.md` lead paragraph (the GitHub About source) in plainer language: drop jargon (Textual, TUI, OTA, LAN, mpv, detached) for a 234-char prose description that keeps the auto-discovery, favorites/history, and dual-channel-viewing selling points.
 - `prune_to_lineup(channels)` prunes only cache maps (play_counts, last_played, format); preferences (favorites, aliases) survive a transient lineup gap and are never pruned.
 - `sort_blocks(channels)` returns two groups `(favorites, all_channels)` in stable numeric order; the play-count-ordered Frequent block is removed. Play counts are still tracked and shown in the Plays column.
 - Saving is file-targeted: a favorites toggle or alias edit writes preferences only; a selection or format write touches the cache only.
