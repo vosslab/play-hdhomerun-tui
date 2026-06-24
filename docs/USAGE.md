@@ -45,6 +45,12 @@ Key tokens are accent-colored and action labels are dim. While the alias popup i
 open, the bar switches to `Enter save   Esc cancel` so inactive list keys are never
 shown.
 
+## Mouse
+
+Mouse use is intentionally minimal. A mouse click may move the cursor to a channel
+row, but a click never launches a channel. Launching playback is keyboard-only,
+through Enter or `p`, so an accidental click or double-click cannot start a stream.
+
 ## Channel list layout
 
 The channel list is a wide fixed-column table under a persistent dim header row

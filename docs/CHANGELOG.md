@@ -40,6 +40,7 @@
 - Suppress the default ListView full-width highlight bar (`#channel_list > ListItem.-highlight` and the focused variant) by setting `background: transparent`, `color: $foreground`, and `text-style: none`; the `>` cursor glyph is the only selection indicator.
 - Add `.block-header { color: $text-muted; }` so section headers read as dim labels.
 - Update `#footer` with a `border-top: solid $panel-lighten-1` for subtle chrome with `background: $panel`.
+- Add `KeyboardLaunchListView` (a `ListView` subclass) for the channel list: a mouse click moves the highlight but no longer posts `Selected`, so clicks never launch a channel. Launching is keyboard-only (Enter or `p`), preventing accidental playback from a stray click or double-click.
 
 ### Fixes and Maintenance
 

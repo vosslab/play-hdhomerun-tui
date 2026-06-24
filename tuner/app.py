@@ -408,6 +408,34 @@ def render_channel_row(
 
 #============================================
 
+class KeyboardLaunchListView(textual.widgets.ListView):
+	"""ListView where the mouse never launches a channel.
+
+	A mouse click focuses the list and moves the highlight to the clicked row,
+	matching Textual's default click behavior, but it does not post the Selected
+	message.  Launching playback stays keyboard-only (Enter or p), so a stray
+	click or double-click cannot accidentally start a stream.
+	"""
+
+	def _on_list_item__child_clicked(
+		self, event: textual.widgets.ListItem._ChildClicked
+	) -> None:
+		"""Handle a mouse click on a row: move the highlight, but do not launch.
+
+		This overrides the base handler, which also posts Selected.  Dropping that
+		post is what keeps the mouse from triggering playback.
+
+		Args:
+			event: The child-clicked message carrying the clicked ListItem.
+		"""
+		# consume the click and move the cursor to the clicked row, but do not
+		# post Selected, so a mouse click can never trigger playback
+		event.stop()
+		self.focus()
+		self.index = self._nodes.index(event.item)
+
+#============================================
+
 class AliasPopup(textual.screen.ModalScreen):
 	"""Small modal popup for editing the alias label of one channel.
 
@@ -618,7 +646,7 @@ class HDHRApp(textual.app.App):
 		# persistent dim column header; rebuilt after lineup load and refresh
 		yield textual.widgets.Static("", id="col_header")
 		# the single channel list; Up/Down move the highlight natively
-		yield textual.widgets.ListView(id="channel_list")
+		yield KeyboardLaunchListView(id="channel_list")
 		# persistent footer of the main key bindings, accent-colored key tokens
 		yield textual.widgets.Static(_FOOTER_MAIN, id="footer")
 
