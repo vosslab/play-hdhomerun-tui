@@ -592,8 +592,13 @@ class HDHRApp(textual.app.App):
 		.block-header {
 			color: $text-muted;
 		}
+		/* dock: bottom pins the footer to the last row so a long channel list
+		   cannot push it off-screen.  height is 2 (not 1) because border-top
+		   consumes one row under border-box sizing; the second row holds the
+		   single line of help text. */
 		#footer {
-			height: 1;
+			dock: bottom;
+			height: 2;
 			padding: 0 1;
 			border-top: solid $panel-lighten-1;
 			background: $panel;

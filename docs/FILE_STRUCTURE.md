@@ -71,6 +71,10 @@ tests/
 +- check_ascii_compliance.py*   single-file ASCII check (runnable directly)
 +- fix_ascii_compliance.py*     single-file ASCII fix (runnable directly)
 +- fix_whitespace.py*           single-file whitespace fix (runnable directly)
+|
++- e2e/                     non-browser end-to-end runners (run outside pytest)
+   +- e2e_tui_screenshot.py*    offline Textual render check; asserts the footer
+                                stays on the bottom row at 100x30 and 80x24
 ```
 
 ### docs/ -- documentation
@@ -90,6 +94,10 @@ docs/
 +- MARKDOWN_STYLE.md        Markdown writing rules and formatting conventions
 +- E2E_TESTS.md             end-to-end test layout and conventions
 +- CLAUDE_HOOK_USAGE_GUIDE.md   Claude Code hook allow/deny reference
+|
++- screenshots/             committed TUI screenshots shown in README.md
+   +- tui_100x30.svg            channel list at the target terminal size
+   +- tui_80x24.svg             channel list at the minimum supported size
 ```
 
 ### devel/ -- developer tools
@@ -110,6 +118,8 @@ devel/
 | cache.json | `~/.cache/play-hdhomerun-tui/cache.json` | n/a (outside repo) |
 | `__pycache__/` | next to each .py file | yes |
 | `.pyc` bytecode | inside `__pycache__/` | yes |
+| screenshot scratch frames | `output_smoke/*.svg` | yes |
+| curated TUI screenshots | `docs/screenshots/*.svg` | no (committed, shown in README) |
 
 State files are created on first run. They are outside the repo and never
 tracked by git. See [docs/USAGE.md](USAGE.md) for field details.

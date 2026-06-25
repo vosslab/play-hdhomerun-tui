@@ -173,8 +173,10 @@ Key test files:
 - [tests/test_function_typing.py](../tests/test_function_typing.py) -- every `def` carries full type annotations.
 - [tests/test_markdown_links.py](../tests/test_markdown_links.py) -- every local Markdown link resolves.
 
-Slow or network-dependent tests are not in `pytest tests/`. End-to-end tests
-(if added) belong in `tests/e2e/` per [docs/E2E_TESTS.md](E2E_TESTS.md).
+Slow or network-dependent tests are not in `pytest tests/`. End-to-end runners
+belong in `tests/e2e/` per [docs/E2E_TESTS.md](E2E_TESTS.md); for example
+[tests/e2e/e2e_tui_screenshot.py](../tests/e2e/e2e_tui_screenshot.py) renders the
+TUI offline and asserts the footer stays on the bottom row.
 
 ## Extension points
 

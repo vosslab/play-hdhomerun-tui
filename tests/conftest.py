@@ -43,7 +43,11 @@ collect_ignore = ["e2e", "playwright"]
 #       "ascii_compliance": ["human_readable-*.html"],
 #       "pyflakes_code_lint": ["devel/scratch_*.py"],
 #   }
-REPO_HYGIENE_FILTERS = {}
+# Generated TUI screenshots are SVG assets (rendered scrollbar and box glyphs
+# are non-ASCII by nature); exclude them from every file-discovery hygiene test.
+REPO_HYGIENE_FILTERS = {
+	"all": ["docs/screenshots/**"],
+}
 
 
 # === OPTIONAL_HELPERS_MENU ===

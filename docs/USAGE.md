@@ -151,3 +151,15 @@ without affecting favorites or aliases. Favorites and aliases are not touched.
 
 Signal quality and strength are never written to either file; they are live readings
 only.
+
+## Screenshots
+
+The offline screenshot harness renders the TUI with a synthetic lineup and checks
+that the keybinding-hint footer stays on the bottom row at 100x30 and 80x24:
+
+```bash
+source source_me.sh && python3 tests/e2e/e2e_tui_screenshot.py
+```
+
+It writes SVG frames into the scratch `output_smoke/` directory. The curated copies
+shown in [README.md](../README.md) live in `docs/screenshots/`.

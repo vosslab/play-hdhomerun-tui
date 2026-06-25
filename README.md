@@ -2,6 +2,16 @@
 
 A simple terminal app for watching live over-the-air TV from an HDHomeRun tuner. It finds the device on your network automatically, shows your channels with favorites and recent picks, and lets you watch two channels at the same time.
 
+## Screenshots
+
+The channel list at the target terminal size (100x30) and the minimum supported size (80x24). The keybinding hints stay pinned to the bottom row at both sizes.
+
+![Channel list at 100 by 30](docs/screenshots/tui_100x30.svg)
+
+![Channel list at 80 by 24](docs/screenshots/tui_80x24.svg)
+
+These images are produced by [tests/e2e/e2e_tui_screenshot.py](tests/e2e/e2e_tui_screenshot.py), which renders frames into the scratch `output_smoke/` directory; the curated copies here are refreshed by copying those frames in.
+
 ## Documentation
 
 - [docs/INSTALL.md](docs/INSTALL.md): prerequisites, install steps, and verify command.

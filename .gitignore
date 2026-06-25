@@ -1,5 +1,6 @@
 # === UNIVERSAL ===
 .DS_Store
+output_*
 report_*.txt
 _temp*.?*
 OTHER_REPOS/

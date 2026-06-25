@@ -1,3 +1,32 @@
+## 2026-06-24
+
+### Additions and New Features
+
+- Add `tests/e2e/e2e_tui_screenshot.py`: an offline Textual pilot harness that renders the TUI with a synthetic 86-channel lineup at 100x30 and 80x24, exports SVG frames, and asserts the channel list rendered, the footer tokens (`refresh`/`quit`) are on the bottom row, and the alias-popup footer swap works. Runs fully offline by stubbing `tuner.discover.discover_devices` and `tuner.lineup.fetch_channels` and pointing `HOME` at a temp dir so no device and no real config/cache files are touched.
+- Add `docs/screenshots/tui_100x30.svg` and `docs/screenshots/tui_80x24.svg`: curated TUI screenshots referenced from `README.md`.
+- Add a Screenshots section to `README.md` and to `docs/USAGE.md` documenting the harness run command and the `output_smoke/` scratch vs `docs/screenshots/` curated split.
+- Add a `REPO_HYGIENE_FILTERS` entry in `tests/conftest.py` excluding `docs/screenshots/**` from file-discovery hygiene tests; the SVG assets contain non-ASCII scrollbar and box glyphs by nature.
+- Document the new `tests/e2e/` runner and the committed `docs/screenshots/` directory in `docs/FILE_STRUCTURE.md`, and reference the screenshot harness from `docs/CODE_ARCHITECTURE.md`.
+
+### Behavior or Interface Changes
+
+- Dock the keybinding-hint footer to the bottom edge (`dock: bottom` in `HDHRApp.CSS`) so it stays pinned to the bottom row regardless of channel-list length. Only the footer is docked; the status line and column header stay in normal flow, because Textual overlaps multiple widgets docked to the same edge.
+
+### Fixes and Maintenance
+
+- Fix the keybinding-hint footer not displaying. Two compounding causes: (1) the undocked `Static#footer` was pushed below the viewport by the long channel list; (2) `height: 1` combined with `border-top` left zero rows for text under Textual's border-box sizing, so even an on-screen footer rendered blank. Fix: add `dock: bottom` and set `height: 2` on `#footer` (one row for the border separator, one for the help text).
+- Ignore the scratch `output_smoke/` screenshot dump via `.gitignore` (`output_*`); the committed copies live in `docs/screenshots/`.
+
+### Decisions and Failures
+
+- Keep the hand-rolled `Static#footer` and dock it rather than adopting Textual's built-in `Footer`. The curated hints `up/down` and `Enter/p` are not real `BINDINGS` (they come from `ListView`-native motion and the `ListView.Selected` message), so the built-in widget would silently drop them and change the styling.
+- Root-cause learning: the missing footer was a layout bug, not missing text. A zero-height content row from `height: 1` plus `border-top` made the docked footer invisible until the height was raised to 2. The new screenshot harness guards both the docking and the visible height at the 80x24 minimum size.
+
+### Developer Tests and Notes
+
+- The screenshot harness is the regression witness for the footer; run it with `source source_me.sh && python3 tests/e2e/e2e_tui_screenshot.py`. `pytest tests/` stays the fast lane (532 tests pass).
+- Make `tests/e2e/e2e_tui_screenshot.py` directly executable (shebang plus exec bit) and report failures by raising `SystemExit`, matching the repo convention for runnable scripts.
+
 ## 2026-06-23
 
 ### Additions and New Features
