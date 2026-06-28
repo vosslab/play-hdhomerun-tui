@@ -110,7 +110,7 @@ the same channel. While the popup is open, `q` does not quit the app.
 
 ## Playback
 
-Pressing Enter or `p` checks the stream format (about 6 seconds while `mediainfo`
+Pressing Enter or `p` checks the stream format (a few seconds while `ffprobe`
 probes the stream the first time) then opens `mpv` in its own detached window.
 The TUI stays fully interactive while the probe runs and returns to the channel
 list immediately after launch. The HDHomeRun FLEX DUO has two tuners, so two

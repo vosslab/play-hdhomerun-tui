@@ -5,7 +5,7 @@ Covers:
   - interlaced_from_format label mapping (pure, no subprocess).
   - interlace_for_playback blank-label fallback (pure, no subprocess).
 
-probe_format (runs mediainfo) is not tested here; it is verified by manual E2E.
+probe_format (runs ffprobe) is not tested here; it is verified by manual E2E.
 """
 
 # local repo modules

@@ -1,3 +1,35 @@
+## 2026-06-26
+
+### Behavior or Interface Changes
+
+- `probe_format` now runs `ffprobe` instead of `mediainfo` to detect stream
+  format. It reads the first video stream's `field_order` (`progressive` -> p,
+  `tt`/`bb`/`tb`/`bt` -> i) and `height`, with a bounded `-read_intervals
+  '%+#1'` sample and a 12 s timeout. Live verification: `2.1` -> `1080i`,
+  `7.1` -> `720p`.
+- Brewfile now requires `ffmpeg` (provides `ffprobe`) in place of `mediainfo`.
+
+### Fixes and Maintenance
+
+- Fixed the always-blank Format column. `mediainfo` never reaches end-of-file
+  on a continuous HDHomeRun transport stream, so the probe hung until its
+  timeout fired and always returned an empty label; nothing was ever cached
+  (`cache.json` `"format"` stayed `{}`). A hung `mediainfo` process also held a
+  tuner open, which produced HTTP 503 lockouts. Persistence and rendering were
+  already correct; only the probe was broken.
+
+### Decisions and Failures
+
+- Chose `ffprobe` over `mediainfo` for the format probe. `mediainfo` is fine for
+  finite files but cannot probe a never-ending live stream; `ffprobe` with a
+  bounded read interval returns in seconds and reports `field_order` and
+  `height` directly.
+
+### Developer Tests and Notes
+
+- `pytest tests/test_playback.py` passes (8 tests). `probe_format` itself
+  remains covered by manual E2E against the live device, not pytest.
+
 ## 2026-06-24
 
 ### Additions and New Features

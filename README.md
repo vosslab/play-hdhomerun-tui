@@ -24,7 +24,7 @@ These images are produced by [tests/e2e/e2e_tui_screenshot.py](tests/e2e/e2e_tui
 
 ## Quick start
 
-Prerequisites: pip packages `textual` and `requests`; system packages `mpv` and `mediainfo`.
+Prerequisites: pip packages `textual` and `requests`; system packages `mpv` and `ffmpeg`.
 
 ```bash
 source source_me.sh && python3 hdhr_tui.py

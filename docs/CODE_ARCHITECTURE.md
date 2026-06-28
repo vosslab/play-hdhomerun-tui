@@ -13,7 +13,7 @@ stays responsive at all times.
 Entry point: [hdhr_tui.py](../hdhr_tui.py)
 TUI package: [tuner/](../tuner/)
 Runtime dependencies: `textual` (TUI), `requests` (HTTP to device)
-System dependencies: `mpv` (video player), `mediainfo` (stream format probe)
+System dependencies: `mpv` (video player), `ffprobe` from `ffmpeg` (stream format probe)
 
 ## Major components
 
@@ -70,9 +70,11 @@ on each startup; preferences (favorites, aliases) are never pruned.
 
 Handles stream format detection and mpv launch.
 
-- `probe_format(url, guide_number)` -- runs `mediainfo --Output=JSON` on the
-  stream URL (6 s timeout), reads `Video.ScanType` and `Video.Height`, and
-  returns a label such as "1080i" or "720p". Returns empty string on any failure.
+- `probe_format(url, guide_number)` -- runs `ffprobe` on the stream URL with a
+  bounded `-read_intervals '%+#1'` sample (12 s timeout), reads the first video
+  stream's `field_order` and `height`, and returns a label such as "1080i" or
+  "720p". Returns empty string on any failure. `mediainfo` is unusable here: it
+  never reaches EOF on a continuous transport stream and hangs until killed.
 - `interlace_for_playback(label, guide_number)` -- derives the interlace flag
   for mpv. Uses the cached label when available; falls back to a hard-coded
   `KNOWN_INTERLACED_GUIDE_NUMBERS` table (e.g. CBS 2.1) when the label is empty.
@@ -151,7 +153,7 @@ hdhr_tui.py
                  +- state.format_label()          check cache
                  +- tuner.playback.probe_format() [if not cached]
                  |    |
-                 |    +- mediainfo --Output=JSON <stream_url>
+                 |    +- ffprobe -read_intervals '%+#1' <stream_url>
                  +- state.set_format()            cache the label
                  +- tuner.playback.interlace_for_playback()
                  +- tuner.playback.launch()

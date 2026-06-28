@@ -1051,7 +1051,7 @@ class HDHRApp(textual.app.App):
 			f"Starting {channel.guide_number} {channel.guide_name} "
 			f"(checking stream format...)"
 		)
-		# probe + launch in a worker thread so the ~6s mediainfo probe and the
+		# probe + launch in a worker thread so the ffprobe probe and the
 		# detached spawn never block the event loop (hard criterion)
 		self._probe_and_launch(channel)
 

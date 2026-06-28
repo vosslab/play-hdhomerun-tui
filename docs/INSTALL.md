@@ -9,7 +9,7 @@ packaging step. There is no `pip install` of this repo itself.
 
 - Python 3.12 (pinned; install via Homebrew `python@3.12`)
 - pip packages: `textual`, `requests`
-- System tools: `mpv` (media player), `mediainfo` (stream format probe)
+- System tools: `mpv` (media player), `ffprobe` from `ffmpeg` (stream format probe)
 - macOS with Homebrew (Brewfile tracks all system deps)
 - bash shell (required by `source_me.sh`)
 
@@ -28,7 +28,7 @@ packaging step. There is no `pip install` of this repo itself.
    brew bundle
    ```
 
-   This installs `python@3.12`, `mpv`, and `mediainfo`.
+   This installs `python@3.12`, `mpv`, and `ffmpeg`.
 
 3. Install pip dependencies:
 

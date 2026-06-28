@@ -15,7 +15,7 @@ play-hdhomerun-tui/
 +- source_me.sh         bootstrap: sets PYTHONPATH and Python env vars
 +- pip_requirements.txt runtime pip dependencies (requests, textual)
 +- pip_requirements-dev.txt  dev pip dependencies (pytest, pyflakes, bandit, ...)
-+- Brewfile             Homebrew system packages (mpv, mediainfo)
++- Brewfile             Homebrew system packages (mpv, ffmpeg)
 +- REPO_TYPE            one-line marker: "python"
 +- VERSION              current CalVer version string, synced with pyproject.toml
 +- README.md            project purpose, quick start, and doc links

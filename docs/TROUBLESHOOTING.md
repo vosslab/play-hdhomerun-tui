@@ -40,26 +40,30 @@ brew install mpv
 
 ---
 
-## mediainfo not installed: Format column stays blank
+## ffprobe not installed: Format column stays blank
 
 **Symptom:** The Format column shows nothing for every channel even after
 launching them.
 
-**Why:** `probe_format` runs `mediainfo --Output=JSON <stream-url>` to detect
-scan type and resolution. When `mediainfo` is not found, the subprocess raises
+**Why:** `probe_format` runs `ffprobe` on the stream URL to read `field_order`
+and `height`. When `ffprobe` is not found, the subprocess raises
 `FileNotFoundError` and `probe_format` returns an empty string. The column
 stays blank rather than showing a guessed label.
 
-**Behavior without mediainfo:** Playback still works. The interlace decision
+**Behavior without ffprobe:** Playback still works. The interlace decision
 falls back to the hard-coded `KNOWN_INTERLACED_GUIDE_NUMBERS` table (currently
 contains channel `2.1` for CBS 1080i). Other channels default to progressive.
-The Format column fills in as channels are launched once `mediainfo` is
+The Format column fills in as channels are launched once `ffprobe` is
 installed.
+
+**Note:** `mediainfo` cannot be used here. It never reaches end-of-file on a
+continuous HDHomeRun transport stream, so the probe hangs until killed and the
+label never fills in. `ffprobe` reads a bounded sample and returns in seconds.
 
 **Fix:**
 
 ```bash
-brew install mediainfo
+brew install ffmpeg
 ```
 
 ---
